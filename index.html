@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Chrome local sqlite cpanel</title>
+	<style>
+		*{font-family:sans-serif;font-style:italic;font-size:14px;height:20px;}
+		table{border-collapse:collapse;width:100%;}
+		td,th{border:1px solid #dddddd;text-align:left;padding:2px;}
+		tr:nth-child(even){background-color:#dddddd;}
+	</style>
+
+	<script src="sqlitecore.js"></script>
+	<script type="text/javascript">
+	
+	let msg_cnt = 0;	
+	function db_show_query_result(res, show_edit = 0){
+		let s_msg = '';
+		if ( res.status != 1 )s_msg = 'Failure: ' + res.result;
+		else if ( res.result.rows.length <= 0 ){
+			if ( res.result.rowsAffected > 0 )s_msg = 'Success: ' + res.result.rowsAffected + ' rows affected';
+			else s_msg = 'Warning: no data found and no rows affected !!!';			
+		}
+		
+		if ( s_msg.length > 0 ){
+			document.getElementById('id_output').innerHTML = '(' + (++msg_cnt) + ') ' + s_msg;
+			return;
+		}
+		
+		let fnames = Object.keys(res.result.rows[0]);
+		s_msg = "<table style=\"width:" + (fnames.length <= 2 ? 50 : 80) + "%;\"><caption>SQL Result</caption><tr>";
+		for ( var i = 0; i < fnames.length; i++ )s_msg += "<th>" + fnames[i] + "</th>";
+		if ( show_edit == 1 )s_msg += "<th></th>";
+		
+		for ( var i = 0; i < res.result.rows.length; i++ ){
+			let s1 = '', s2 = '';
+			let vals = Object.values(res.result.rows[i]);
+			
+			for ( var j = 0; j < vals.length; j++ ){
+				s1 += '<td>' + vals[j] + '</td>';
+				if ( show_edit == 1 )s2 += (j > 0 ? '###' : '') + vals[j];
+			}
+			if ( show_edit == 1 )s1 += '<td onClick="on_result_row_click(\'' + s2 + '\');"><u>Edit</u></td>';
+			s_msg += '</tr><tr>' + s1;
+		}
+		s_msg += '</tr></table>';
+		document.getElementById("id_output").innerHTML = s_msg;
+	}
+	
+	function on_result_row_click(s){
+		let ss = s.split('###');
+		for ( var i = 0; i < ss.length; i++ ){
+			let v = document.getElementById('id_editrow_' + i);
+			if ( v == null )break;
+			v.value = ss[i];
+		}
+	}
+	
+	async function db_async_handler(cmdname, cmd_options){
+		if ( db_is_initiated() != 1 ){
+			document.getElementById("id_output").innerHTML = db_init_error;
+			return;
+		}
+		
+		if ( cmdname == 'query_exec' ){
+			db_show_query_result(await db_execute_query_async(cmd_options));
+			return;
+		}
+
+		if ( cmdname == 'query_exec_and_show_table' ){
+			let p = cmd_options.indexOf('###');
+			let tbl_name = cmd_options.substr(0,p), s_query = cmd_options.substr(p+3);
+			let res = await db_execute_query_async(s_query);
+			if ( res.status != 1 ){
+				db_show_query_result(res);
+				return;
+			}
+			await db_async_handler('table_show', tbl_name);
+			return;
+		}
+		
+		if ( cmdname == 'table_list'){
+			let res = await db_execute_query_async("select name from sqlite_master where type='table';");
+			if ( res.status != 1 ){
+				document.getElementById('id_table_list').innerHTML = 'No table found !!!<br/><br/>' + res.result;
+				return;
+			}
+			
+			let s_first = null;
+			let s = '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<select id="id_tbl_list" onChange="db_async_handler(\'table_show\',document.getElementById(\'id_tbl_list\').value);">';
+			for ( var i = res.result.rows.length-1; i >= 0; i-- ){
+				let s1 = Object.values(res.result.rows[i])[0];
+				s += '<option>' + s1 + '</option>';
+				if ( s_first == null )s_first = s1;
+			}
+			let s_drop_query = "document.getElementById('id_temp_query').innerHTML='drop table ' + ";
+			s_drop_query += "document.getElementById('id_tbl_list').value + ';'";
+			s += '</select>&nbsp;<input type="button" value="Drop" onClick="' + s_drop_query + '"/>';			
+			document.getElementById('id_table_list').innerHTML = s;
+			db_async_handler('table_show', s_first);
+			return;
+		}
+		
+		if ( cmdname == 'table_show'){
+			let tb_name = cmd_options;
+			db_show_query_result(await db_execute_query_async('select * from ' + tb_name), 1);		
+		
+			let strct = await db_async_handler('table_structure', tb_name);	
+			if ( strct == null || strct.fnames.length <= 0 )return;
+			
+			let fnames = strct.fnames, fdefs = strct.fdefs, pk_fname_no = -1;
+			for ( var i = 0; i < fnames.length; i++ )if ( fnames[i].startsWith('#')){pk_fname_no = i; fnames[i] = fnames[i].substr(1);}
+			let btn_parms = tb_name + ',' + pk_fname_no;
+			for ( var i = 0; i < fnames.length; i++ )btn_parms += ',' + fnames[i];
+			
+			let s_msg = "<br/><br/><table style=\"width:60%;\">";
+			s_msg += '<tr><th>Insert/edit/delete item</th><th style="width:50%;"></th></tr>';
+			for ( var i = 0; i < fnames.length; i++ ){
+				s_msg += '<tr><td>' + fnames[i] + '</td>';
+				s_msg += '<td><input type="text" id="id_editrow_' + i + '" value="' + fdefs[i] + '" style="width:95%;"/></td></tr>';
+			}
+
+			s_msg += '<tr><td><input type="button" onClick="table_data_edit(\'insert\',\'' + btn_parms + '\');" value="Insert item"/>';
+			
+			if ( pk_fname_no >= 0 ){
+				s_msg += '<input type="button" onClick="table_data_edit(\'edit\',\'' + btn_parms + '\');" value="Edit item"/>';
+				s_msg += '<input type="button" onClick="table_data_edit(\'delete\',\'' + btn_parms + '\');" value="Delete item"/>';
+			}	
+			
+			s_msg += '</td><td><input type="checkbox" id="id_editrow_execute_delay">Execute after editing query.</input>';
+			s_msg += '</td></tr></table>';
+			if ( pk_fname_no < 0 )s_msg += '<br/>Warning: this table has no PRIMARY INTEGER key. So, you can edit/delete rows by query only.';
+			document.getElementById('id_output').innerHTML += s_msg;
+			return;
+		}		
+		
+		if ( cmdname == 'table_structure' ){
+			let res = await db_execute_query_async("select sql from sqlite_master where type='table' and name='" + cmd_options + "'");			
+			if ( res.status != 1 || res.result.rows.length <= 0 || res.result.rows[0].sql == null )return null;
+			
+			console.log(res.result.rows[0].sql);
+			let tbl_sql = res.result.rows[0].sql.trim().toLowerCase();
+			
+			if ( tbl_sql.indexOf('(') >= 0 )tbl_sql = tbl_sql.substr(tbl_sql.indexOf('(') + 1);
+			if ( tbl_sql.indexOf(')') >= 0 )tbl_sql = tbl_sql.substr(0, tbl_sql.lastIndexOf(')'));
+			let fnames = tbl_sql.split(',');
+			
+			let fdefs = [];
+			for ( var i = 0; i < fnames.length; i++ )fdefs[i] = '';
+			
+			for ( var i = 0; i < fnames.length; i++ ){
+				fnames[i] = fnames[i].trim();
+				if ( fnames[i].indexOf(' ') < 0 )continue;
+				let fdef = fnames[i].substr(fnames[i].indexOf(' ')+1).trim();
+				fnames[i] = fnames[i].substr(0, fnames[i].indexOf(' '));
+
+				if ( fdef.indexOf('primary') >= 0 && fdef.indexOf('int') >= 0 ){					
+					let res2 = await db_execute_query_async('select max(' + fnames[i] + ')+1 as new_id from ' + cmd_options);
+					if ( res2.status == 1 && res2.result.rows.length > 0 && res2.result.rows[0].new_id != null )fdef = res2.result.rows[0].new_id;
+					else fdef = '1';
+					
+					fnames[i] = '#' + fnames[i];
+				}else if ( fdef.indexOf('default') >= 0 ){
+					let fdef2 = fdef.substr(fdef.indexOf('default') + 8).trim();
+					fdef = '';
+					for ( var j = 0; j < fdef2.length; j++ ){
+						if ( fdef2.charAt(j) != '"' && fdef2.charAt(j) != '\'' )fdef += fdef2.charAt(j);
+					}
+				}else fdef = '';
+				
+				fdefs[i] = fdef;
+			}
+		
+			return {fnames: fnames, fdefs: fdefs};
+		}		
+	}
+
+	function table_data_edit(s_cmd, parms){
+		let ss = parms.split(',');
+		let tbl_name = ss[0], pk_no = parseInt(ss[1]);
+		let field_cnt = ss.length - 2;
+		
+		let ssql = '';
+		if ( s_cmd == 'delete' ){
+			if ( pk_no < 0 || pk_no >= field_cnt )return;
+			ssql = 'delete from ' + tbl_name + ' where ' + ss[2+pk_no] + '=\'';
+			ssql += document.getElementById('id_editrow_' + pk_no).value.trim() + '\'';
+		}else if ( s_cmd == 'edit' ){			
+			if ( pk_no < 0 || pk_no >= field_cnt )return;			
+			
+			let cnt = 0;
+			ssql = 'update ' + tbl_name + ' set ';
+			for ( var j = 0; j < field_cnt; j++ ){
+				if ( j == pk_no )continue;
+				if ( cnt > 0 )ssql += ', ';
+				ssql += ss[2+j] + '=\'';				
+				ssql += document.getElementById('id_editrow_' + j).value.trim() + '\'';				
+				cnt++;
+			}			
+			ssql += ' where ' + ss[2+pk_no] + '=\'' + document.getElementById('id_editrow_' + pk_no).value.trim() + '\';';
+		}else{
+			ssql = 'insert into ' + tbl_name + ' values(';
+			for ( var j = 0; j < field_cnt; j++ ){
+				if ( j > 0 )ssql += ', ';
+				ssql += '\'' + document.getElementById('id_editrow_' + j).value.trim() + '\'';
+			}
+			ssql += ');';
+		}				
+		
+		if ( document.getElementById('id_editrow_execute_delay').checked ){
+			document.getElementById('id_temp_query').innerHTML = ssql;
+		}else db_async_handler('query_exec_and_show_table', tbl_name + '###' + ssql);		
+	}
+	
+	function show_newtable_form(){
+		let dtps = ['INTEGER', 'TEXT'];
+		let opts = ['None', 'PRIMARY KEY', 'UNIQUE'];
+		
+		let s = '<table style="width:80%;"><caption>New Table</caption>';
+		s += '<tr><th>Field name</th><th>Data type</th><th>Default value</th><th>Options</th></tr></tr>';
+		
+		for ( var i = 1; i <= 10; i++ ){
+			let s1 = ( i == 1 ? 'id' : ''), s2 = '', s3 = '';
+			for ( var j = 0; j < dtps.length; j++ ){
+				if ( i == 1 && j == 0 )s2 += '<option selected="selected">' + dtps[j] + '</option>';
+				else if ( i != 1 && j == 2 )s2 += '<option selected="selected">' + dtps[j] + '</option>';
+				else s2 += '<option>' + dtps[j] + '</option>';
+			}
+			
+			for ( var j = 0; j < opts.length; j++ ){
+				s3 += ( i == 1 && j == 1 ? '<option selected="selected">' : '<option>' ) + opts[j] + '</option>';
+			}
+			
+			s += '<tr><td><input type="text" id="newtfn' + i + '" style="width:80%;height:14px;" value="' + s1 + '"/></td>';			
+			s += '<td><select id="newtft' + i + '" style="width:100%;">' + s2 + '</select></td>';
+			s += '<td><input type="text" id="newtfd' + i + '" style="width:80%;height:14px;" value=""/></td>';
+			s += '<td><select id="newtfo' + i + '" style="width:100%;">' + s3 + '</select></td></tr>';
+		}
+		s += '</table><br/>';
+		s += 'New table name: <input type="text" id="id_newt_name" value="t_"/><input type="button" onClick="add_new_table(1);" value="Add table"/>';
+		s += '<input type="button" onClick="add_new_table(0);" value="Edit query and add table"/><br/>';
+		document.getElementById("id_output").innerHTML = s;
+	}
+	
+	function add_new_table(add_immediately){
+		let tb_name = document.getElementById('id_newt_name').value.trim();
+		if ( tb_name == null || tb_name.length <= 0 ){
+			alert('Error: no table name entered !!!');
+			return;
+		}
+		
+		let s = "CREATE TABLE " + tb_name + "(";
+		let field_count = 0;
+		for ( var i = 1; i <= 20; i++ ){
+			if ( document.getElementById('newtfn' + i) == null )break;
+			let s1 = document.getElementById('newtfn' + i).value.trim();
+			if ( s1 == null || s1.length <= 0 )continue;
+			let s2 = document.getElementById('newtft' + i).value.trim();
+			let s3 = document.getElementById('newtfd' + i).value.trim();
+			let s4 = document.getElementById('newtfo' + i).value.trim().toLowerCase();
+			if ( field_count > 0 )s += ',';
+			s += s1 + ' ' + s2;
+			if ( s4.indexOf('primary') >= 0 )s += ' PRIMARY KEY';
+			if ( s4.indexOf('unique') >= 0 )s += " UNIQUE";
+			else if ( s3.length > 0 )s += ' default "' + s3 + '"';			
+			field_count++;
+		}
+		s += ");";
+		if ( field_count <= 0 ){
+			alert('Error: no field entered !!!');
+			return;
+		}
+		
+		if ( add_immediately == 1 )db_async_handler('query_exec', s);		
+		else{
+			document.getElementById('id_temp_query').value = s;
+			alert("Click 'Execute query'");
+		}
+	}
+	
+	</script>
+</head>
+
+<body>
+<textarea id='id_temp_query' style="width:100%;height:35px;">select * from t_</textarea><br/>
+<input type="button" onClick="db_async_handler('query_exec', document.getElementById('id_temp_query').value)" value="Execute query"/>
+<input type="button" onClick="show_newtable_form()" value='New table'>
+<input type="button" onClick="db_async_handler('table_list', 0)" value="Table list"/><label id='id_table_list'></label><br/>
+<br/><label id='id_output'></label><br/><br/>
+</body>
+</html>
