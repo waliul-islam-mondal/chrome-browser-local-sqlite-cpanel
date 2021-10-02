@@ -1,3 +1,5 @@
+For live test, visit https://waliul-islam-mondal.github.io/chrome-browser-local-sqlite-cpanel/
+
 This is a javascript+html only project. It doesn't use server side coding/script. You can just download this project and run in your local chrome browser.
 
 After you open this page in your chrome browser, you can
