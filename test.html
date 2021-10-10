@@ -6,7 +6,7 @@
 <script type="text/javascript">
 function fetch_url(){
 	let s_url = document.getElementById('id_url').value;
-	fetch(s_url, {credentials: 'include'})
+	fetch(s_url, {credentials: 'omit'})
 	.then(response => response.json())
 	.then(data => console.log(data));
 }
