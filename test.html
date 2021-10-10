@@ -6,7 +6,7 @@
 <script type="text/javascript">
 function fetch_url(){
 	let s_url = document.getElementById('id_url').value;
-	fetch(s_url)
+	fetch(s_url, {credentials: 'include'})
 	.then(response => response.json())
 	.then(data => console.log(data));
 }
@@ -15,7 +15,7 @@ function fetch_url(){
 </head>
 
 <body>
-<input type='text' id='id_url' value='http://example.com/movies.json'/><br/>
+<input type='text' id='id_url' value='https://google.com'/><br/>
 <input type="button" onclick="fetch_url()" value="Fetch"
 </body>
 </html>
